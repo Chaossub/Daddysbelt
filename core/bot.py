@@ -24,11 +24,30 @@ class DaddysBeltBot(commands.Bot):
 
     async def setup_hook(self):
         await self.database.connect()
-        for extension in ("cogs.dashboard","cogs.scheduled_worker","cogs.triggers","cogs.pokemon_stock","cogs.voice_recording"): await self.load_extension(extension)
+        for extension in ("cogs.dashboard","cogs.scheduled_worker","cogs.triggers","cogs.pokemon_stock","cogs.voice_recording"):
+            await self.load_extension(extension)
+
+        # Always keep the global command tree up to date.
+        synced = await self.tree.sync()
+        log.info("Synced %s global command(s).", len(synced))
+
+        # Also sync the current tree into every guild the bot is already in.
+        # Guild commands update immediately, so newly-added /record subcommands
+        # appear right away instead of waiting for Discord's global cache.
+        for guild in self.guilds:
+            try:
+                self.tree.copy_global_to(guild=guild)
+                guild_synced = await self.tree.sync(guild=guild)
+                log.info("Synced %s command(s) to guild %s (%s).", len(guild_synced), guild.name, guild.id)
+            except Exception:
+                log.exception("Could not sync application commands to guild %s.", guild.id)
+
+        # Preserve fast-sync behavior for an explicitly configured development guild.
         if self.settings.development_guild_id:
-            guild=discord.Object(id=self.settings.development_guild_id);self.tree.copy_global_to(guild=guild);synced=await self.tree.sync(guild=guild);log.info("Synced %s command(s) to development server %s.",len(synced),guild.id)
-        else:
-            synced=await self.tree.sync();log.info("Synced %s global command(s).",len(synced))
+            guild = discord.Object(id=self.settings.development_guild_id)
+            self.tree.copy_global_to(guild=guild)
+            dev_synced = await self.tree.sync(guild=guild)
+            log.info("Synced %s command(s) to development server %s.", len(dev_synced), guild.id)
 
     async def on_ready(self):
         if not self.user:return
@@ -36,7 +55,14 @@ class DaddysBeltBot(commands.Bot):
         await self.change_presence(activity=discord.CustomActivity(name="reviewing questionable decisions"))
         for guild in self.guilds: await self.database.ensure_guild_profile(guild)
 
-    async def on_guild_join(self,guild): await self.database.ensure_guild_profile(guild)
+    async def on_guild_join(self, guild):
+        await self.database.ensure_guild_profile(guild)
+        try:
+            self.tree.copy_global_to(guild=guild)
+            synced = await self.tree.sync(guild=guild)
+            log.info("Synced %s command(s) to newly joined guild %s (%s).", len(synced), guild.name, guild.id)
+        except Exception:
+            log.exception("Could not sync application commands to newly joined guild %s.", guild.id)
     async def on_guild_remove(self,guild): await self.database.mark_guild_inactive(guild.id)
 
     async def get_text_channel(self,guild,channel_id):
