@@ -137,6 +137,7 @@ class MongoDatabase:
                 "control_channel_id": None,
                 "output_channel_id": None,
                 "auto_voice_channel_id": None,
+                "caption_channel_id": None,
             },
             "access_control": {
                 "bot_manager_role_ids": [],
@@ -327,6 +328,25 @@ class MongoDatabase:
                 "$set": {
                     "voice_recording.control_channel_id": int(control_channel_id),
                     "voice_recording.output_channel_id": int(output_channel_id),
+                    "last_updated_at": utc_now(),
+                }
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+
+    async def set_voice_recording_caption_channel(
+        self,
+        guild_id: int,
+        channel_id: int | None,
+    ) -> dict[str, Any] | None:
+        return await asyncio.to_thread(
+            self.guilds.find_one_and_update,
+            {"guild_id": guild_id},
+            {
+                "$set": {
+                    "voice_recording.caption_channel_id": (
+                        int(channel_id) if channel_id is not None else None
+                    ),
                     "last_updated_at": utc_now(),
                 }
             },
