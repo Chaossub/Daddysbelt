@@ -815,10 +815,23 @@ class AutomodView(discord.ui.View):
     @discord.ui.button(label="Punishment Sound", emoji="🔊", style=discord.ButtonStyle.secondary, row=2)
     async def sound(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         if not await _authorized(interaction, self.bot, minimum="admin"): return
-        profile = await self.bot.database.get_guild_profile(interaction.guild.id) or {}
-        current = bool((profile.get("vc_automod") or {}).get("punishment_sound_enabled", True))
-        await self.bot.database.set_config_path(interaction.guild.id, "vc_automod.punishment_sound_enabled", not current)
-        await show_automod_page(interaction, self.bot)
+        await show_punishment_sound_page(interaction, self.bot)
+
+    @discord.ui.button(label="House Trained Role", emoji="🏠", style=discord.ButtonStyle.secondary, row=2)
+    async def house_role(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        if not await _authorized(interaction, self.bot, minimum="admin"): return
+        await interaction.response.edit_message(
+            embed=discord.Embed(title="VC Automod • House Trained Role", description="Choose the role Mommy removes during punishment and restores afterward."),
+            view=HouseRoleView(self.bot, back_page="automod"),
+        )
+
+    @discord.ui.button(label="Grant / Remove Access", emoji="🎟️", style=discord.ButtonStyle.secondary, row=2)
+    async def access(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        if not await _authorized(interaction, self.bot, minimum="admin"): return
+        await interaction.response.edit_message(
+            embed=discord.Embed(title="VC Automod • House Trained Access", description="Manually give or remove the configured House Trained role."),
+            view=HouseAccessView(self.bot),
+        )
 
     @discord.ui.button(label="Back", emoji="⬅️", style=discord.ButtonStyle.secondary, row=3)
     async def back(self, interaction: discord.Interaction, _: discord.ui.Button) -> None: await navigate(interaction, self.bot, "home")
@@ -935,12 +948,117 @@ class AutomodMemberActionView(discord.ui.View):
 class HouseRoleSelect(discord.ui.RoleSelect):
     def __init__(self,parent): super().__init__(placeholder="Choose House Trained role…",min_values=1,max_values=1); self.parent=parent
     async def callback(self,interaction):
-        role=self.values[0]; await self.parent.bot.database.set_config_path(interaction.guild.id,"verification.house_trained_role_id",role.id)
+        if not await _authorized(interaction, self.parent.bot, minimum="admin"): return
+        role=self.values[0]
+        await self.parent.bot.database.set_config_path(interaction.guild.id,"verification.house_trained_role_id",role.id)
         await interaction.response.send_message(f"House Trained role set to {role.mention}. Make sure Mommy's role is above it.",ephemeral=True)
 class HouseRoleView(discord.ui.View):
-    def __init__(self,bot): super().__init__(timeout=300); self.bot=bot; self.add_item(HouseRoleSelect(self))
+    def __init__(self,bot,back_page="verification"):
+        super().__init__(timeout=300); self.bot=bot; self.back_page=back_page; self.add_item(HouseRoleSelect(self))
     @discord.ui.button(label="Back",emoji="⬅️",style=discord.ButtonStyle.secondary,row=1)
-    async def back(self,interaction,_): await navigate(interaction,self.bot,"verification")
+    async def back(self,interaction,_): await navigate(interaction,self.bot,self.back_page)
+    @discord.ui.button(label="Home",emoji="🏠",style=discord.ButtonStyle.success,row=1)
+    async def home(self,interaction,_): await navigate(interaction,self.bot,"home")
+
+
+class HouseAccessMemberSelect(discord.ui.UserSelect):
+    def __init__(self,parent,action):
+        super().__init__(placeholder="Choose member…",min_values=1,max_values=1); self.parent=parent; self.action=action
+    async def callback(self,interaction):
+        if not await _authorized(interaction, self.parent.bot, minimum="admin"): return
+        member=interaction.guild.get_member(int(self.values[0].id))
+        profile=await self.parent.bot.database.get_guild_profile(interaction.guild.id) or {}
+        role_id=(profile.get("verification") or {}).get("house_trained_role_id")
+        role=interaction.guild.get_role(int(role_id)) if role_id else None
+        if member is None or role is None:
+            await interaction.response.send_message("Choose a member and configure House Trained first.",ephemeral=True); return
+        if self.action=="grant":
+            if role not in member.roles: await member.add_roles(role,reason="Manual Mommy.exe House Trained grant")
+            msg=f"Granted {role.mention} to {member.mention}."
+        else:
+            if role in member.roles: await member.remove_roles(role,reason="Manual Mommy.exe House Trained removal")
+            msg=f"Removed {role.mention} from {member.mention}."
+        await interaction.response.send_message(msg,ephemeral=True)
+
+class HouseAccessPickView(discord.ui.View):
+    def __init__(self,bot,action):
+        super().__init__(timeout=300); self.bot=bot; self.add_item(HouseAccessMemberSelect(self,action))
+    @discord.ui.button(label="Back",emoji="⬅️",style=discord.ButtonStyle.secondary,row=1)
+    async def back(self,interaction,_): await navigate(interaction,self.bot,"automod")
+    @discord.ui.button(label="Home",emoji="🏠",style=discord.ButtonStyle.success,row=1)
+    async def home(self,interaction,_): await navigate(interaction,self.bot,"home")
+
+class HouseAccessView(discord.ui.View):
+    def __init__(self,bot): super().__init__(timeout=600); self.bot=bot
+    @discord.ui.button(label="Grant House Trained",emoji="✅",style=discord.ButtonStyle.success)
+    async def grant(self,interaction,_):
+        if not await _authorized(interaction,self.bot,minimum="admin"): return
+        await interaction.response.edit_message(embed=discord.Embed(title="Grant House Trained",description="Choose a member."),view=HouseAccessPickView(self.bot,"grant"))
+    @discord.ui.button(label="Remove House Trained",emoji="🚫",style=discord.ButtonStyle.danger)
+    async def remove(self,interaction,_):
+        if not await _authorized(interaction,self.bot,minimum="admin"): return
+        await interaction.response.edit_message(embed=discord.Embed(title="Remove House Trained",description="Choose a member."),view=HouseAccessPickView(self.bot,"remove"))
+    @discord.ui.button(label="Back",emoji="⬅️",style=discord.ButtonStyle.secondary,row=1)
+    async def back(self,interaction,_): await navigate(interaction,self.bot,"automod")
+    @discord.ui.button(label="Home",emoji="🏠",style=discord.ButtonStyle.success,row=1)
+    async def home(self,interaction,_): await navigate(interaction,self.bot,"home")
+
+
+class PunishmentSoundURLModal(discord.ui.Modal,title="Set Punishment Sound URL"):
+    url=discord.ui.TextInput(label="Direct audio URL",placeholder="https://.../sound.mp3",max_length=500)
+    def __init__(self,bot): super().__init__(); self.bot=bot
+    async def on_submit(self,interaction):
+        if not await _authorized(interaction,self.bot,minimum="admin"): return
+        value=str(self.url).strip()
+        if not value.startswith(("https://","http://")):
+            await interaction.response.send_message("Use a direct http/https audio URL.",ephemeral=True); return
+        await self.bot.database.set_config_path(interaction.guild.id,"vc_automod.punishment_sound_url",value)
+        await self.bot.database.set_config_path(interaction.guild.id,"vc_automod.punishment_sound_mode","url")
+        await self.bot.database.set_config_path(interaction.guild.id,"vc_automod.punishment_sound_enabled",True)
+        await interaction.response.send_message("Custom punishment sound saved. Use **Test Sound** to try it.",ephemeral=True)
+
+class PunishmentTTSModal(discord.ui.Modal,title="Set Punishment TTS Line"):
+    text=discord.ui.TextInput(label="What should Mommy say?",default="You're banned.",max_length=180)
+    def __init__(self,bot): super().__init__(); self.bot=bot
+    async def on_submit(self,interaction):
+        if not await _authorized(interaction,self.bot,minimum="admin"): return
+        await self.bot.database.set_config_path(interaction.guild.id,"vc_automod.punishment_tts_text",str(self.text).strip() or "You're banned.")
+        await self.bot.database.set_config_path(interaction.guild.id,"vc_automod.punishment_sound_mode","tts")
+        await self.bot.database.set_config_path(interaction.guild.id,"vc_automod.punishment_sound_enabled",True)
+        await interaction.response.send_message("Punishment TTS line saved. Use **Test Sound** to try it.",ephemeral=True)
+
+class PunishmentSoundView(discord.ui.View):
+    def __init__(self,bot): super().__init__(timeout=600); self.bot=bot
+    @discord.ui.button(label="Custom Audio URL",emoji="🔗",style=discord.ButtonStyle.primary,row=0)
+    async def url(self,interaction,_):
+        if not await _authorized(interaction,self.bot,minimum="admin"): return
+        await interaction.response.send_modal(PunishmentSoundURLModal(self.bot))
+    @discord.ui.button(label="TTS Line",emoji="🗣️",style=discord.ButtonStyle.primary,row=0)
+    async def tts(self,interaction,_):
+        if not await _authorized(interaction,self.bot,minimum="admin"): return
+        await interaction.response.send_modal(PunishmentTTSModal(self.bot))
+    @discord.ui.button(label="Turn Off",emoji="🔇",style=discord.ButtonStyle.danger,row=0)
+    async def off(self,interaction,_):
+        if not await _authorized(interaction,self.bot,minimum="admin"): return
+        await self.bot.database.set_config_path(interaction.guild.id,"vc_automod.punishment_sound_mode","off")
+        await self.bot.database.set_config_path(interaction.guild.id,"vc_automod.punishment_sound_enabled",False)
+        await show_punishment_sound_page(interaction,self.bot)
+    @discord.ui.button(label="Test Sound",emoji="▶️",style=discord.ButtonStyle.success,row=1)
+    async def test(self,interaction,_):
+        if not await _authorized(interaction,self.bot,minimum="admin"): return
+        cog=_voice_cog(self.bot)
+        if cog is None or not interaction.guild.voice_client:
+            await interaction.response.send_message("Mommy needs to be connected to a VC before testing the sound.",ephemeral=True); return
+        await interaction.response.defer(ephemeral=True,thinking=True)
+        try:
+            await cog.play_punishment_sound(interaction.guild)
+            await interaction.followup.send("Played the configured punishment sound.",ephemeral=True)
+        except Exception as exc:
+            await interaction.followup.send(f"Sound test failed: `{type(exc).__name__}`. Check Render logs for the detailed error.",ephemeral=True)
+    @discord.ui.button(label="Back",emoji="⬅️",style=discord.ButtonStyle.secondary,row=2)
+    async def back(self,interaction,_): await navigate(interaction,self.bot,"automod")
+    @discord.ui.button(label="Home",emoji="🏠",style=discord.ButtonStyle.success,row=2)
+    async def home(self,interaction,_): await navigate(interaction,self.bot,"home")
 
 class RulesChannelSelect(discord.ui.ChannelSelect):
     def __init__(self,parent): super().__init__(placeholder="Choose rules channel…",channel_types=[discord.ChannelType.text],min_values=1,max_values=1); self.parent=parent
@@ -983,8 +1101,20 @@ async def show_automod_page(interaction: discord.Interaction, bot) -> None:
     cog=_vc_automod_cog(bot); cfg=await cog.ensure_defaults(interaction.guild) if cog else ((await bot.database.get_guild_profile(interaction.guild.id) or {}).get("vc_automod") or {})
     profile=await bot.database.get_guild_profile(interaction.guild.id) or {}; role_id=(profile.get("verification") or {}).get("house_trained_role_id")
     triggers=cfg.get("triggers") or []
-    desc=(f"**Enabled:** {'yes' if cfg.get('enabled',True) else 'no'}\n**House Trained:** {f'<@&{role_id}>' if role_id else 'not set'}\n**Triggers:** {len(triggers)}\n**Exception roles:** {len(cfg.get('exception_role_ids') or [])}\n**Window:** default 10 minutes • **History:** 7 days\n**Punishment ladder:** 5m → 15m → 1h → 24h\n**Punishment sound:** {'on' if cfg.get('punishment_sound_enabled',True) else 'off'}\n\nPossible quotations are logged but do not count toward automatic punishment.")
+    desc=(f"**Enabled:** {'yes' if cfg.get('enabled',True) else 'no'}\n**House Trained:** {f'<@&{role_id}>' if role_id else 'not set'}\n**Triggers:** {len(triggers)}\n**Exception roles:** {len(cfg.get('exception_role_ids') or [])}\n**Window:** default 10 minutes • **History:** 7 days\n**Punishment ladder:** 5m → 15m → 1h → 24h\n**Punishment sound:** {str(cfg.get('punishment_sound_mode') or 'tts') if cfg.get('punishment_sound_enabled',True) else 'off'}\n\nPossible quotations are logged but do not count toward automatic punishment.")
     await interaction.response.edit_message(embed=discord.Embed(title="Mommy.exe • VC Automod",description=desc),view=AutomodView(bot))
+
+async def show_punishment_sound_page(interaction: discord.Interaction, bot) -> None:
+    profile=await bot.database.get_guild_profile(interaction.guild.id) or {}
+    cfg=profile.get("vc_automod") or {}
+    mode=str(cfg.get("punishment_sound_mode") or "tts").lower()
+    enabled=bool(cfg.get("punishment_sound_enabled",True)) and mode!="off"
+    if mode=="url":
+        detail="Custom audio URL" if cfg.get("punishment_sound_url") else "Custom URL (not set)"
+    elif mode=="off": detail="Off"
+    else: detail=f"TTS: `{str(cfg.get('punishment_tts_text') or "You're banned.")[:80]}`"
+    desc=f"**Enabled:** {'yes' if enabled else 'no'}\n**Selected sound:** {detail}\n\nUse a direct MP3/WAV/OGG URL, or let Mommy say a short TTS line. **Test Sound** plays the current choice in her VC."
+    await interaction.response.edit_message(embed=discord.Embed(title="VC Automod • Punishment Sound",description=desc),view=PunishmentSoundView(bot))
 
 async def show_vc_triggers_page(interaction: discord.Interaction, bot) -> None:
     cog=_vc_automod_cog(bot); cfg=await cog.ensure_defaults(interaction.guild) if cog else ((await bot.database.get_guild_profile(interaction.guild.id) or {}).get("vc_automod") or {})
