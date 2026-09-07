@@ -1,1 +1,0 @@
-"""Mommy.exe bot package."""
