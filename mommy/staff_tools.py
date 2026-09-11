@@ -543,6 +543,7 @@ class StaffToolsCog(commands.Cog):
         return sessions, rows, notes, incidents
 
     @app_commands.command(name="staff", description="Open Mommy.exe's private VC moderation and recording dashboard.")
+    @app_commands.default_permissions(administrator=True)
     @app_commands.guild_only()
     async def staff(self, interaction: discord.Interaction) -> None:
         if not await _staff(interaction, self.bot):
@@ -559,6 +560,7 @@ class StaffToolsCog(commands.Cog):
         await interaction.response.send_message(embed=embed, view=StaffDashboardView(self), ephemeral=True)
 
     @app_commands.command(name="incident-bookmark", description="Bookmark a 7-minute moderation window in the active VC recording.")
+    @app_commands.default_permissions(administrator=True)
     @app_commands.guild_only()
     async def incident_bookmark(self, interaction: discord.Interaction, reason: str = "") -> None:
         if not await _staff(interaction, self.bot):
